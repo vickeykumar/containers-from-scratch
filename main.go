@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"syscall"
+	"github.com/containerd/cgroups"
+	specs "github.com/opencontainers/runtime-spec/specs-go"
 )
 
 // go run main.go run <cmd> <args>
@@ -23,18 +25,60 @@ func main() {
 }
 
 func run() {
-	fmt.Printf("Running %v \n", os.Args[2:])
-
-	cmd := exec.Command("/proc/self/exe", append([]string{"child"}, os.Args[2:]...)...)
+	fmt.Printf("Running %v \n", os.Args[3:])
+	shares := uint64(100)
+	mem, _ := strconv.ParseInt(os.Args[2], 10, 64)
+	memlimit := int64(mem*1024*1024)
+	fmt.Println("memlimit: ",memlimit," : in mb: ",mem)
+	control, err := cgroups.New(cgroups.V1, cgroups.StaticPath("/test"), &specs.LinuxResources{
+    	CPU: &specs.LinuxCPU{
+        	Shares: &shares,
+		Cpus:   "0",
+		Mems:	"0",	
+    	},
+	Memory: &specs.LinuxMemory{
+		Limit: &memlimit,
+	},
+	})
+	if err != nil {
+		fmt.Println("Error while creating new cgroup: ",err)
+		os.Exit(1)
+	}
+	defer control.Delete()
+	cmd := exec.Command(os.Args[3], os.Args[4:]...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Cloneflags: syscall.CLONE_NEWUTS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNS,
-		Unshareflags: syscall.CLONE_NEWNS,
+		Cloneflags: syscall.CLONE_NEWUTS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNS | syscall.CLONE_NEWNET| syscall.CLONE_NEWUSER,
+		Unshareflags: syscall.CLONE_NEWNS | syscall.CLONE_NEWNET,
 	}
+	//must(syscall.Mount("/tmp", "/mytemp", "tmpfs", 0, ""))
+	//must(cmd.Run())
+	err = cmd.Start()
+	if err != nil {
+		fmt.Println("Error: ",err)
+	}
+	pid := cmd.Process.Pid
+	if err := control.Add(cgroups.Process{Pid:pid}); err != nil {
+		fmt.Printf("Error while adding process : %d to cgroups: %s\n",pid,err)
+	}
+	fmt.Println("Waiting for command to finish...",pid)
+	err = cmd.Wait()
+	if err!=nil {
+	if exiterr, ok := err.(*exec.ExitError); ok {
+            // The program has exited with an exit code != 0
 
-	must(cmd.Run())
+            // This works on both Unix and Windows. Although package
+            // syscall is generally platform dependent, WaitStatus is
+            // defined for both Unix and Windows and in both cases has
+            // an ExitStatus() method with the same signature.
+            if status, ok := exiterr.Sys().(syscall.WaitStatus); ok {
+                fmt.Printf("Exit Status: %d\n", status.ExitStatus())
+            }
+        }
+	}
+	fmt.Println("Command finished with error: ", err)
 }
 
 func child() {
@@ -48,7 +92,7 @@ func child() {
 	cmd.Stderr = os.Stderr
 
 	must(syscall.Sethostname([]byte("container")))
-	must(syscall.Chroot("/home/liz/ubuntufs"))
+	must(syscall.Chroot("/"))
 	must(os.Chdir("/"))
 	must(syscall.Mount("proc", "proc", "proc", 0, ""))
 	must(syscall.Mount("thing", "mytemp", "tmpfs", 0, ""))
@@ -74,3 +118,4 @@ func must(err error) {
 		panic(err)
 	}
 }
+
