@@ -52,6 +52,20 @@ func run() {
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Cloneflags: syscall.CLONE_NEWUTS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNS | syscall.CLONE_NEWNET| syscall.CLONE_NEWUSER,
 		Unshareflags: syscall.CLONE_NEWNS | syscall.CLONE_NEWNET,
+		UidMappings: []syscall.SysProcIDMap{
+			{
+				ContainerID: 0,
+				HostID:      os.Getuid(),
+				Size:        1,
+			},
+		},
+		GidMappings: []syscall.SysProcIDMap{
+			{
+				ContainerID: 0,
+				HostID:      os.Getgid(),
+				Size:        1,
+			},
+		},
 	}
 	//must(syscall.Mount("/tmp", "/mytemp", "tmpfs", 0, ""))
 	//must(cmd.Run())
